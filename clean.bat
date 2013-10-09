@@ -9,3 +9,7 @@ cd ..
 cd npc0
 del NPC.npx
 cd ..
+
+cd npx1
+make clean
+cd ..
