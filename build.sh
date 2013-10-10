@@ -13,3 +13,7 @@ cd ..
 cd npx1
 make
 cd ..
+
+cd npc1
+./c0.sh SL
+cd ..

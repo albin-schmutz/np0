@@ -1,0 +1,224 @@
+MODULE SL;
+
+{ string linker; string injection for NPC.npx }
+
+
+CONST
+
+  SysInfoStartHeap = 1;
+  SysInfoArgsCount = 2;
+
+  SysModeRead = 1; SysModeWrite = 2;
+
+  SizeBuffer = 512;
+
+
+TYPE
+
+  FileChannel = RECORD
+    len : INT;  { see sys.c struct STACK_FILE_CHANNEL }
+    addr : INT; { reversed order for stack layout }
+    file : INT;
+    buf : ARRAY SizeBuffer OF CHAR;
+    bufIx : INT
+  END;
+
+
+VAR
+
+  dummy : INT;
+  heap : INT;
+  argsCount : INT;
+  filename : INT;
+  file : INT;
+  stringSource : FileChannel;
+  addr : INT;
+  addrInt : INT ^ addr;
+  addrChar : CHAR ^ addr;
+  n : INT;
+  varSize : INT;
+  entryPoint : INT;
+
+
+PROC getInfo(VAR info : INT; ix : INT);
+
+  BEGIN
+    SYS(1, info, ADDR(ix))
+  END getInfo;
+
+
+PROC getArg(VAR arg : INT; ix : INT);
+
+  BEGIN
+    SYS(2, arg, ADDR(ix))
+  END getArg;
+
+
+PROC openFile(VAR file : INT; name : INT; mode : INT);
+
+  BEGIN
+    SYS(3, file, ADDR(mode))
+  END openFile;
+
+
+PROC closeFile(file : INT);
+
+  BEGIN
+    SYS(4, file, ADDR(file))
+  END closeFile;
+
+
+PROC readFile(VAR n : INT; file : INT; addr : INT; len : INT);
+
+  BEGIN
+    SYS(5, n, ADDR(len))
+  END readFile;
+
+
+PROC writeFile(VAR n : INT; file : INT; addr : INT; len : INT);
+
+  BEGIN
+    SYS(6, n, ADDR(len))
+  END writeFile;
+
+
+PROC alignAddr(VAR a : INT; signed : BOOL);
+
+  VAR i : INT;
+
+  BEGIN
+    i := a % SIZE(INT);
+    IF i <> 0 THEN
+      IF a < 0 THEN
+        IF signed THEN
+          a := a - SIZE(INT) - i
+        ELSE
+          a := a - i
+        END
+      ELSE
+        a := a + SIZE(INT) - i
+      END
+    END
+  END alignAddr;
+
+
+PROC initFileChannel(VAR fc : FileChannel);
+
+  BEGIN
+    fc.len := SizeBuffer;
+    fc.addr := ADDR(fc.buf);
+    fc.bufIx := fc.len
+  END initFileChannel;
+
+
+PROC readChar(VAR c : INT; VAR fc : FileChannel);
+
+  VAR n : INT;
+
+  BEGIN
+    IF (fc.bufIx = fc.len) & (SizeBuffer = fc.len) THEN
+      SYS(5, fc.len, ADDR(fc));
+      fc.bufIx := 0
+    END;
+    IF fc.bufIx < fc.len THEN
+      c := ORD(fc.buf[fc.bufIx]);
+      fc.bufIx := fc.bufIx + 1
+    ELSE
+      c := -1
+    END
+  END readChar;
+
+
+PROC parse;
+
+  VAR
+
+    c : INT;
+    start : INT;
+    end : INT;
+    addr2 : INT;
+    addr2Int : INT ^ addr2;
+    n : INT;
+
+
+  PROC put(VAR r : INT; w : CHAR);
+
+    BEGIN
+      addrChar := w;
+      addr := addr + 1;
+      readChar(r, stringSource)
+    END put;
+
+
+  BEGIN
+    readChar(c, stringSource);
+    WHILE c <> -1 DO
+      IF c = 5CH THEN
+        readChar(c, stringSource);
+        IF c = 5CH THEN
+          put(c, 5CX)
+        ELSIF c = 6EH THEN
+          put(c, 0AX)
+        ELSIF c = 30H THEN
+          put(c, 0X)
+        END
+      ELSIF c >= 20H THEN
+        put(c, CHR(c))
+      ELSE
+        readChar(c, stringSource)
+      END
+    END;
+    start := heap;
+    end := addr;
+    addr := heap;
+    heap := end;
+    alignAddr(heap, FALSE);
+    addr2 := heap;
+    n := 0;
+    WHILE addr < end DO
+      IF addrChar = 0X THEN
+        addr2Int := start - addr2; addr2 := addr2 + SIZE(INT);
+        addr2Int := addr - start; addr2 := addr2 + SIZE(INT);
+        start := addr + 1;
+        n := n + 1
+      END;
+      addr := addr + 1
+    END;
+    addr2Int := n; addr2 := addr2 + SIZE(INT);
+    heap := addr2
+  END parse;
+
+
+BEGIN
+  getInfo(heap, SysInfoStartHeap);
+  getInfo(argsCount, SysInfoArgsCount);
+  IF argsCount >= 2 THEN
+    getArg(filename, 0);
+    openFile(file, filename, SysModeRead);
+    IF file <> 0 THEN
+      getArg(filename, 1);
+      openFile(stringSource.file, filename, SysModeRead);
+      IF stringSource.file <> 0 THEN
+        readFile(n, file, heap, 16 * 256 * 256);
+        closeFile(file);
+        heap := heap + n - 2 * SIZE(INT);
+        addr := heap; varSize := addrInt;
+        addr := addr + SIZE(INT); entryPoint := addrInt;
+        initFileChannel(stringSource);
+        addr := heap;
+        parse;
+        closeFile(stringSource.file);
+        addr := heap; addrInt := varSize;
+        addr := addr + SIZE(INT); addrInt := entryPoint;
+        heap := addr + SIZE(INT);
+        getArg(filename, 0);
+        openFile(file, filename, SysModeWrite);
+        IF file <> 0 THEN
+          getInfo(addr, SysInfoStartHeap);
+          writeFile(dummy, file, addr, heap - addr);
+          closeFile(file)
+        END
+      END
+    END
+  END
+END SL.

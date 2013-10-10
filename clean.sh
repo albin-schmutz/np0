@@ -13,3 +13,8 @@ cd ..
 cd npx1
 make clean
 cd ..
+
+cd npc1
+rm SL.npa
+rm SL.npx
+cd ..
